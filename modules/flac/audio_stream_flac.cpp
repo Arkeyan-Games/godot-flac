@@ -14,6 +14,13 @@ int AudioStreamPlaybackFLAC::_mix_internal(AudioFrame *p_buffer, int p_frames) {
 
 	int start_buffer = 0;
 
+	//Shamelessly stolen from AudioStreamMP3. Completely untested
+	int beat_length_frames = -1;
+	bool beat_loop = flac_stream->has_loop() && flac_stream->get_bpm() > 0 && flac_stream->get_beat_count() > 0;
+	if (beat_loop) {
+		beat_length_frames = flac_stream->get_beat_count() * flac_stream->sample_rate * 60 / flac_stream->get_bpm();
+	}
+
 	while (todo && active) {
 		float *pSamples = (float *)memalloc(todo * pFlac->channels * sizeof(float));
 		float *buffer = (float *)p_buffer;
@@ -25,6 +32,20 @@ int AudioStreamPlaybackFLAC::_mix_internal(AudioFrame *p_buffer, int p_frames) {
 		for (int i = 0; i < mixed; i++) {
 			buffer[i * 2] = pSamples[i * flac_stream->channels];
 			buffer[i * 2 + 1] = pSamples[i * flac_stream->channels + flac_stream->channels - 1];
+		}
+
+		//Please work. (Once again, completely untested)
+		if (beat_loop && (int)frames_mixed >= beat_length_frames) {
+			for (int i = 0; i < FADE_SIZE; i++) {
+				mixed = drflac_read_pcm_frames_f32(pFlac, todo, pSamples);
+				loop_fade[i] = AudioFrame(buffer[0], buffer[mixed - 1]);
+				if (!mixed) {
+					break;
+				}
+			}
+			loop_fade_remaining = 0;
+			seek(flac_stream->loop_offset);
+			loops++;
 		}
 
 		todo -= mixed;
@@ -78,13 +99,14 @@ int AudioStreamPlaybackFLAC::get_loop_count() const {
 double AudioStreamPlaybackFLAC::get_playback_position() const {
 	return float(frames_mixed) / float(flac_stream->sample_rate);
 }
-void AudioStreamPlaybackFLAC::seek(float p_time) {
+void AudioStreamPlaybackFLAC::seek(double p_time) {
 	if (!active)
 		return;
 
 	if (p_time >= flac_stream->get_length()) {
 		p_time = 0;
 	}
+
 	frames_mixed = flac_stream->sample_rate * p_time;
 	drflac_seek_to_pcm_frame(pFlac, frames_mixed);
 }
@@ -96,9 +118,7 @@ AudioStreamPlaybackFLAC::~AudioStreamPlaybackFLAC() {
 	}
 }
 
-AudioStreamPlaybackFLAC::AudioStreamPlaybackFLAC() {
-	//i BEG you linker please stop screaming everything is alright
-}
+AudioStreamPlaybackFLAC::AudioStreamPlaybackFLAC() = default;
 
 Ref<AudioStreamPlayback> AudioStreamFLAC::instantiate_playback() {
 	Ref<AudioStreamPlaybackFLAC> flacs;
@@ -173,16 +193,50 @@ bool AudioStreamFLAC::has_loop() const {
 	return loop;
 }
 
-void AudioStreamFLAC::set_loop_offset(float p_seconds) {
+void AudioStreamFLAC::set_loop_offset(double p_seconds) {
 	loop_offset = p_seconds;
 }
 
-float AudioStreamFLAC::get_loop_offset() const {
+double AudioStreamFLAC::get_loop_offset() const {
 	return loop_offset;
 }
 
 double AudioStreamFLAC::get_length() const {
 	return length;
+}
+
+bool AudioStreamFLAC::is_monophonic() const {
+	return false;
+}
+
+void AudioStreamFLAC::set_bpm(double p_bpm) {
+	ERR_FAIL_COND(p_bpm < 0);
+	bpm = p_bpm;
+	emit_changed();
+}
+
+double AudioStreamFLAC::get_bpm() const {
+	return bpm;
+}
+
+void AudioStreamFLAC::set_beat_count(int p_beat_count) {
+	ERR_FAIL_COND(p_beat_count < 0);
+	beat_count = p_beat_count;
+	emit_changed();
+}
+
+int AudioStreamFLAC::get_beat_count() const {
+	return beat_count;
+}
+
+void AudioStreamFLAC::set_bar_beats(int p_bar_beats) {
+	ERR_FAIL_COND(p_bar_beats < 0);
+	bar_beats = p_bar_beats;
+	emit_changed();
+}
+
+int AudioStreamFLAC::get_bar_beats() const {
+	return bar_beats;
 }
 
 void AudioStreamFLAC::_bind_methods() {
